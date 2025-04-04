@@ -107,8 +107,6 @@ pub async fn run(base: CommandBase) -> Result<i32, cli::Error> {
 
     let inconsistencies = find_inconsistencies(&all_dependencies_map);
 
-    println!("{:#?}", inconsistencies);
-
     if !inconsistencies.is_empty() {
         has_inconsistencies = true;
         total_inconsistencies += inconsistencies.len();
@@ -116,7 +114,6 @@ pub async fn run(base: CommandBase) -> Result<i32, cli::Error> {
         cprintln!(color_config, BOLD, "\nInconsistent dependencies found:");
 
         for (dep_name, versions) in inconsistencies {
-            println!("{dep_name}");
             cprintln!(
                 color_config,
                 BOLD_RED,
