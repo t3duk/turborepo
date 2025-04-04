@@ -35,8 +35,8 @@ struct DependencyVersion {
 
 fn find_inconsistencies(
     dep_map: &HashMap<String, DependencyVersion>,
-) -> HashMap<String, Vec<(&str, &Vec<String>)>> {
-    let mut inconsistencies: HashMap<String, Vec<(&str, &Vec<String>)>> = HashMap::new();
+) -> HashMap<String, HashMap<String, Vec<String>>> {
+    let mut inconsistencies: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
 
     // Group dependencies by their base name (stripping version suffixes)
     for (full_name, dep_info) in dep_map {
@@ -48,10 +48,13 @@ fn find_inconsistencies(
             full_name.clone()
         };
 
+        // Add to the version map for this dependency
         inconsistencies
             .entry(base_name)
+            .or_insert_with(HashMap::new)
+            .entry(dep_info.version.clone())
             .or_insert_with(Vec::new)
-            .push((dep_info.version.as_str(), &dep_info.locations));
+            .extend(dep_info.locations.clone());
     }
 
     // Filter out dependencies with only one version
@@ -114,7 +117,7 @@ pub async fn run(base: CommandBase) -> Result<i32, cli::Error> {
                 for (version, locations) in versions {
                     println!("    {} version '{}' in:", GREY.apply_to("→"), version);
 
-                    for location in locations {
+                    for location in &locations {
                         println!("      {}", location);
                     }
                 }
