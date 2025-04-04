@@ -28,6 +28,7 @@ pub enum Error {
     NoPackageJsonFound,
 }
 
+#[derive(Debug)]
 struct DependencyVersion {
     version: String,
     locations: Vec<String>,
@@ -36,21 +37,32 @@ struct DependencyVersion {
 fn find_inconsistencies(
     dep_map: &HashMap<String, DependencyVersion>,
 ) -> HashMap<String, HashMap<String, Vec<String>>> {
-    let mut inconsistencies: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
+    let mut result: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
 
-    // Group dependencies by their base name (stripping version suffixes)
+    // First, group all dependencies by their base name (without version suffix)
     for (full_name, dep_info) in dep_map {
-        let base_name = if full_name.contains('@') {
+        // Extract base name from keys like "package@version" or just use the original
+        // name, handling scoped packages properly
+        let base_name = if full_name.starts_with('@') {
+            // This is a scoped package like "@babel/core" or "@types/react"
+            // If it also has @version, extract just the package name part
+            if let Some(version_idx) = full_name[1..].find('@') {
+                &full_name[0..=version_idx]
+            } else {
+                // It's a scoped package without version suffix
+                full_name.as_str()
+            }
+        } else if full_name.contains('@') {
             // This is a versioned entry like "react@16.0.0"
-            full_name.split('@').next().unwrap().to_string()
+            full_name.split('@').next().unwrap()
         } else {
             // This is a regular entry
-            full_name.clone()
+            full_name.as_str()
         };
 
-        // Add to the version map for this dependency
-        inconsistencies
-            .entry(base_name)
+        // Add this version to the base dependency's version map
+        result
+            .entry(base_name.to_string())
             .or_insert_with(HashMap::new)
             .entry(dep_info.version.clone())
             .or_insert_with(Vec::new)
@@ -58,9 +70,9 @@ fn find_inconsistencies(
     }
 
     // Filter out dependencies with only one version
-    inconsistencies.retain(|_, versions| versions.len() > 1);
+    result.retain(|_, versions| versions.len() > 1);
 
-    inconsistencies
+    result
 }
 
 pub async fn run(base: CommandBase) -> Result<i32, cli::Error> {
@@ -81,49 +93,47 @@ pub async fn run(base: CommandBase) -> Result<i32, cli::Error> {
         package_json_files.len()
     );
 
-    // Collect all dependencies and their versions
-    let mut dependencies_map: HashMap<String, HashMap<String, DependencyVersion>> = HashMap::new();
-
-    // Group dependencies into "dependencies" and "devDependencies"
-    dependencies_map.insert("dependencies".to_string(), HashMap::new());
-    dependencies_map.insert("devDependencies".to_string(), HashMap::new());
+    // Collect all dependencies and their versions - we use a single map for all
+    // dependency types
+    let mut all_dependencies_map: HashMap<String, DependencyVersion> = HashMap::new();
 
     for package_json_path in &package_json_files {
-        process_package_json(package_json_path, repo_root, &mut dependencies_map)?;
+        process_package_json(package_json_path, repo_root, &mut all_dependencies_map)?;
     }
 
     // Check for inconsistencies and build report
     let mut has_inconsistencies = false;
     let mut total_inconsistencies = 0;
 
-    for (dep_type, dep_map) in &dependencies_map {
-        let inconsistencies = find_inconsistencies(dep_map);
+    let inconsistencies = find_inconsistencies(&all_dependencies_map);
 
-        if !inconsistencies.is_empty() {
-            has_inconsistencies = true;
-            total_inconsistencies += inconsistencies.len();
+    println!("{:#?}", inconsistencies);
 
-            cprintln!(color_config, BOLD, "\nInconsistent {} found:", dep_type);
+    if !inconsistencies.is_empty() {
+        has_inconsistencies = true;
+        total_inconsistencies += inconsistencies.len();
 
-            for (dep_name, versions) in inconsistencies {
-                cprintln!(
-                    color_config,
-                    BOLD_RED,
-                    "  {} has {} different versions:",
-                    dep_name,
-                    versions.len()
-                );
+        cprintln!(color_config, BOLD, "\nInconsistent dependencies found:");
 
-                for (version, locations) in versions {
-                    println!("    {} version '{}' in:", GREY.apply_to("→"), version);
+        for (dep_name, versions) in inconsistencies {
+            println!("{dep_name}");
+            cprintln!(
+                color_config,
+                BOLD_RED,
+                "  {} has {} different versions:",
+                dep_name,
+                versions.len()
+            );
 
-                    for location in &locations {
-                        println!("      {}", location);
-                    }
+            for (version, locations) in versions {
+                println!("    {} version '{}' in:", GREY.apply_to("→"), version);
+
+                for location in &locations {
+                    println!("      {}", location);
                 }
-
-                println!();
             }
+
+            println!();
         }
     }
 
@@ -179,7 +189,7 @@ fn find_package_json_files(
 fn process_package_json(
     package_json_path: &AbsoluteSystemPath,
     repo_root: &AbsoluteSystemPath,
-    dependencies_map: &mut HashMap<String, HashMap<String, DependencyVersion>>,
+    all_dependencies_map: &mut HashMap<String, DependencyVersion>,
 ) -> Result<(), Error> {
     let package_json_content =
         package_json_path
@@ -210,12 +220,17 @@ fn process_package_json(
     let location = format!("{} ({})", package_name, relative_path);
 
     // Process both dependency types
-    process_dependency_type("dependencies", &package_json, &location, dependencies_map);
+    process_dependency_type(
+        "dependencies",
+        &package_json,
+        &location,
+        all_dependencies_map,
+    );
     process_dependency_type(
         "devDependencies",
         &package_json,
         &location,
-        dependencies_map,
+        all_dependencies_map,
     );
 
     Ok(())
@@ -225,75 +240,54 @@ fn process_dependency_type(
     dep_type: &str,
     package_json: &Value,
     location: &str,
-    dependencies_map: &mut HashMap<String, HashMap<String, DependencyVersion>>,
+    all_dependencies_map: &mut HashMap<String, DependencyVersion>,
 ) {
     if let Some(deps) = package_json.get(dep_type).and_then(|v| v.as_object()) {
-        let dep_map = dependencies_map.get_mut(dep_type).unwrap();
-
         for (dep_name, version_value) in deps {
             if let Some(version) = version_value.as_str() {
-                // Check if we already have this dependency with this version
-                let version_exists = dep_map
-                    .get(dep_name)
-                    .map_or(false, |entry| entry.version == version);
+                // Check if we already have this dependency
+                if let Some(entry) = all_dependencies_map.get(&dep_name.clone()) {
+                    if entry.version == version {
+                        // Same version, just add the location
+                        let mut locations = entry.locations.clone();
+                        locations.push(location.to_string());
 
-                if version_exists {
-                    // If this version already exists, just add the location
-                    if let Some(entry) = dep_map.get_mut(dep_name) {
-                        entry.locations.push(location.to_string());
-                    }
-                } else {
-                    // This is a new dependency or a new version of an existing dependency
-                    // We need to build a HashMap keyed by version
-                    let mut dep_versions = HashMap::new();
-
-                    // If the dependency already exists with different versions,
-                    // we need to handle the existing versions
-                    if let Some(existing_entry) = dep_map.remove(dep_name) {
-                        // Insert the existing version
-                        dep_versions
-                            .insert(existing_entry.version.clone(), existing_entry.locations);
-                    }
-
-                    // Now add the new version
-                    let mut locations = Vec::new();
-                    locations.push(location.to_string());
-                    dep_versions.insert(version.to_string(), locations);
-
-                    // If this is the first time we've seen a version,
-                    // create a new entry for the dependency name
-                    // Otherwise, add this version to the existing versions
-                    if dep_versions.len() == 1 {
-                        // Only one version, use the simple structure
-                        let (version, locations) = dep_versions.into_iter().next().unwrap();
-                        dep_map.insert(dep_name.clone(), DependencyVersion { version, locations });
-                    } else {
-                        // Multiple versions, create a "fake" entry that will be caught
-                        // as an inconsistency. We'll use the most recent version
-                        // (which is the one we just added)
-                        let new_locations = dep_versions.get(version).unwrap().clone();
-                        dep_map.insert(
+                        // Update with the new locations
+                        all_dependencies_map.insert(
                             dep_name.clone(),
                             DependencyVersion {
                                 version: version.to_string(),
-                                locations: new_locations,
+                                locations,
                             },
                         );
+                    } else {
+                        // Different version - create new versioned entries in the result directly
+                        // We DON'T want to modify the key names here
 
-                        // We add entries for all other versions too
-                        for (ver, locs) in dep_versions {
-                            if ver != version {
-                                let name_with_ver = format!("{}@{}", dep_name, ver);
-                                dep_map.insert(
-                                    name_with_ver,
-                                    DependencyVersion {
-                                        version: ver,
-                                        locations: locs,
-                                    },
-                                );
-                            }
-                        }
+                        // We need to preserve both versions with their locations
+                        // Create a versioned map in the find_inconsistencies function
+
+                        // For now, just add this version to the result with a unique key
+                        // that preserves the package name but includes version info
+                        let versioned_key = format!("{}@{}", dep_name, version);
+
+                        all_dependencies_map.insert(
+                            versioned_key,
+                            DependencyVersion {
+                                version: version.to_string(),
+                                locations: vec![location.to_string()],
+                            },
+                        );
                     }
+                } else {
+                    // New dependency, just add it with the clean name
+                    all_dependencies_map.insert(
+                        dep_name.clone(),
+                        DependencyVersion {
+                            version: version.to_string(),
+                            locations: vec![location.to_string()],
+                        },
+                    );
                 }
             }
         }
