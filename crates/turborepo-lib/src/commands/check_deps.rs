@@ -32,6 +32,12 @@ pub enum Error {
     #[error("Failed to find any package.json files")]
     NoPackageJsonFound,
 
+    #[error(
+        "Not a monorepo: only found one package.json file. The `check-deps` command is intended \
+         for monorepos with multiple packages."
+    )]
+    NotAMonorepo,
+
     #[error("Failed to read turbo.json at {path}")]
     FailedToReadTurboJson {
         path: AbsoluteSystemPathBuf,
@@ -154,6 +160,11 @@ pub async fn run(base: CommandBase) -> Result<i32, cli::Error> {
         return Err(Error::NoPackageJsonFound.into());
     }
 
+    // Check if this is a monorepo (has more than one package.json)
+    if package_json_files.len() == 1 {
+        return Err(Error::NotAMonorepo.into());
+    }
+
     // Try to load the root turbo.json if it exists
     let turbo_config = load_turbo_json(repo_root).ok();
 
@@ -242,19 +253,17 @@ pub async fn run(base: CommandBase) -> Result<i32, cli::Error> {
                             BOLD_RED.apply_to(version),
                             BOLD_GREEN.apply_to(pinned_version)
                         );
-                    } else {
-                        println!(
-                            "{} version '{}' (correct) in:",
-                            "→",
-                            BOLD_GREEN.apply_to(version)
-                        );
+
+                        for location in locations {
+                            cprintln!(color_config, GREY, "  {}", location);
+                        }
                     }
                 } else {
                     println!("{} version '{}' in:", "→", BOLD_RED.apply_to(version));
-                }
 
-                for location in locations {
-                    cprintln!(color_config, GREY, "  {}", location);
+                    for location in locations {
+                        cprintln!(color_config, GREY, "  {}", location);
+                    }
                 }
             }
 
