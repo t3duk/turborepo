@@ -106,6 +106,26 @@ impl From<&RawRemoteCacheOptions> for ConfigurationOptions {
     }
 }
 
+// Dependency configuration for dependency version checking
+#[derive(Serialize, Deserialize, Debug, Clone, Iterable, Deserializable, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyConfig {
+    /// When true, dependency version inconsistencies for this package will be
+    /// ignored
+    #[serde(default)]
+    pub ignore: bool,
+
+    /// List of package name patterns that this rule applies to
+    /// Supports glob patterns like "*" or "**" for all packages
+    #[serde(default)]
+    pub packages: Vec<String>,
+
+    /// Optional version to enforce across all matching packages
+    /// If specified, all packages matching the patterns must use this version
+    #[serde(default, rename = "pinToVersion")]
+    pub pin_to_version: Option<String>,
+}
+
 #[derive(Serialize, Default, Debug, Clone, Iterable, Deserializable)]
 #[serde(rename_all = "camelCase")]
 // The raw deserialized turbo.json file.
@@ -132,6 +152,10 @@ pub struct RawTurboJson {
     // and cache behavior on a per task or per package-task basis.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tasks: Option<Pipeline>,
+
+    // Configuration for dependency version checking
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dependencies: Option<HashMap<String, DependencyConfig>>,
 
     #[serde(skip_serializing)]
     pub pipeline: Option<Spanned<Pipeline>>,

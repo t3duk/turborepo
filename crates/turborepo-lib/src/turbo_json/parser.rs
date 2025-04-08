@@ -114,6 +114,13 @@ impl WithMetadata for RawTurboJson {
             boundaries.value.add_text(text.clone());
         }
 
+        // Add text for the dependencies field
+        if let Some(dependencies) = &mut self.dependencies {
+            // No need to add text to the HashMap itself, only its values would
+            // need text/path info which isn't currently implemented
+            // for DependencyConfig
+        }
+
         self.tasks.add_text(text.clone());
         self.cache_dir.add_text(text.clone());
         self.pipeline.add_text(text);
@@ -133,6 +140,12 @@ impl WithMetadata for RawTurboJson {
         if let Some(boundaries) = &mut self.boundaries {
             boundaries.value.add_path(path.clone());
         }
+
+        // Add path for the dependencies field
+        if let Some(dependencies) = &mut self.dependencies {
+            // No need to add path to the HashMap itself
+        }
+
         self.tasks.add_path(path.clone());
         self.cache_dir.add_path(path.clone());
         self.pipeline.add_path(path);
