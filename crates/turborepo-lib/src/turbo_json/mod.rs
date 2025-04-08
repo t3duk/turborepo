@@ -714,6 +714,7 @@ impl TurboJson {
                     )))])
                 }),
                 persistent: Some(Spanned::new(true)),
+                env_mode: Some(EnvMode::Loose),
                 ..Default::default()
             }),
         );

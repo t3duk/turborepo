@@ -5,6 +5,7 @@ description: Learn how to use GitHub Actions with Turborepo.
 
 import { PackageManagerTabs, Tab } from '#/components/tabs';
 import { Steps, Step } from '#/components/steps';
+import { Callout } from '#/components/callout';
 
 The following example shows how to use Turborepo with [GitHub Actions](https://github.com/features/actions).
 
@@ -43,96 +44,7 @@ And a `turbo.json`:
 Create a file called `.github/workflows/ci.yml` in your repository with the following contents:
 
 <PackageManagerTabs>
-  <Tab>
-
-    ```yaml title=".github/workflows/ci.yml"
-    name: CI
-
-    on:
-      push:
-        branches: ["main"]
-      pull_request:
-        types: [opened, synchronize]
-
-    jobs:
-      build:
-        name: Build and Test
-        timeout-minutes: 15
-        runs-on: ubuntu-latest
-        # To use Remote Caching, uncomment the next lines and follow the steps below.
-        # env:
-        #  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-        #  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
-        #  TURBO_REMOTE_ONLY: true
-
-        steps:
-          - name: Check out code
-            uses: actions/checkout@v4
-            with:
-              fetch-depth: 2
-
-          - name: Setup Node.js environment
-            uses: actions/setup-node@v4
-            with:
-              node-version: 20
-              cache: 'npm'
-
-          - name: Install dependencies
-            run: npm install
-
-          - name: Build
-            run: npm run build
-
-          - name: Test
-            run: npm run test
-    ```
-
-  </Tab>
-  <Tab>
-
-    ```yaml title=".github/workflows/ci.yml"
-    name: CI
-
-    on:
-      push:
-        branches: ["main"]
-      pull_request:
-        types: [opened, synchronize]
-
-    jobs:
-      build:
-        name: Build and Test
-        timeout-minutes: 15
-        runs-on: ubuntu-latest
-        # To use Remote Caching, uncomment the next lines and follow the steps below.
-        # env:
-        #  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-        #  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
-
-        steps:
-          - name: Check out code
-            uses: actions/checkout@v4
-            with:
-              fetch-depth: 2
-
-          - name: Setup Node.js environment
-            uses: actions/setup-node@v4
-            with:
-              node-version: 20
-              cache: 'yarn'
-
-          - name: Install dependencies
-            run: yarn
-
-          - name: Build
-            run: yarn build
-
-          - name: Test
-            run: yarn test
-    ```
-
-  </Tab>
-  <Tab>
+  <Tab value="pnpm">
     ```yaml title=".github/workflows/ci.yml"
     name: CI
 
@@ -179,6 +91,96 @@ Create a file called `.github/workflows/ci.yml` in your repository with the foll
     ```
 
   </Tab>
+
+  <Tab value="yarn">
+
+    ```yaml title=".github/workflows/ci.yml"
+    name: CI
+
+    on:
+      push:
+        branches: ["main"]
+      pull_request:
+        types: [opened, synchronize]
+
+    jobs:
+      build:
+        name: Build and Test
+        timeout-minutes: 15
+        runs-on: ubuntu-latest
+        # To use Remote Caching, uncomment the next lines and follow the steps below.
+        # env:
+        #  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+        #  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+
+        steps:
+          - name: Check out code
+            uses: actions/checkout@v4
+            with:
+              fetch-depth: 2
+
+          - name: Setup Node.js environment
+            uses: actions/setup-node@v4
+            with:
+              node-version: 20
+              cache: 'yarn'
+
+          - name: Install dependencies
+            run: yarn
+
+          - name: Build
+            run: yarn build
+
+          - name: Test
+            run: yarn test
+    ```
+
+  </Tab>
+  <Tab value="npm">
+
+    ```yaml title=".github/workflows/ci.yml"
+    name: CI
+
+    on:
+      push:
+        branches: ["main"]
+      pull_request:
+        types: [opened, synchronize]
+
+    jobs:
+      build:
+        name: Build and Test
+        timeout-minutes: 15
+        runs-on: ubuntu-latest
+        # To use Remote Caching, uncomment the next lines and follow the steps below.
+        # env:
+        #  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+        #  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+        #  TURBO_REMOTE_ONLY: true
+
+        steps:
+          - name: Check out code
+            uses: actions/checkout@v4
+            with:
+              fetch-depth: 2
+
+          - name: Setup Node.js environment
+            uses: actions/setup-node@v4
+            with:
+              node-version: 20
+              cache: 'npm'
+
+          - name: Install dependencies
+            run: npm install
+
+          - name: Build
+            run: npm run build
+
+          - name: Test
+            run: npm run test
+    ```
+
+  </Tab>
 </PackageManagerTabs>
 
 ## Remote Caching
@@ -187,7 +189,7 @@ To use Remote Caching with GitHub Actions, add the following environment variabl
 to make them available to your `turbo` commands.
 
 - `TURBO_TOKEN` - The Bearer token to access the Remote Cache
-- `TURBO_TEAM` - The account to which the monorepo belongs
+- `TURBO_TEAM` - The account to which the repository belongs
 
 To use Remote Caching, retrieve the team and token for the Remote Cache for your provider. In this example, we'll use [Vercel Remote Cache](https://vercel.com/docs/monorepos/remote-caching).
 
@@ -209,14 +211,14 @@ Go to your GitHub repository settings and click on the **Secrets** and then **Ac
 </Step>
 
 <Step>
-Create a new repository variable (click the **Variables** tab) called `TURBO_TEAM` and enter the value of your team's Vercel URL _without_ the `vercel.com/`.
-   Using a repository variable rather than a secret will keep GitHub Actions from censoring your team name in log output.
+Create a new repository variable (click the **Variables** tab) called `TURBO_TEAM` and enter [your Team URL](https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fsettings&title=Find+Team+URL).
+
+<Callout type="good-to-know">
+  Using a repository variable rather than a secret will keep GitHub Actions from
+  censoring your team name in log output.
+</Callout>
 
 ![GitHub Repository Variables](/images/docs/vercel-team-repo-var.png)
-
-Your Team URL can be found inside your team's general project settings from the dashboard. If you're using a Hobby Plan, you can use your username. Your username can be found in your [Vercel Personal Account Settings](https://vercel.com/account)
-
-![Vercel Account Slug](/images/docs/vercel-slug.png)
 
 </Step>
 <Step>
@@ -231,9 +233,9 @@ jobs:
     timeout-minutes: 15
     runs-on: ubuntu-latest
     # To use Turborepo Remote Caching, set the following environment variables for the job.
-    env:
-      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }} // [!code highlight]
-      TURBO_TEAM: ${{ vars.TURBO_TEAM }} // [!code highlight]
+    env: # [!code highlight]
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }} # [!code highlight]
+      TURBO_TEAM: ${{ vars.TURBO_TEAM }} # [!code highlight]
 
     steps:
       - name: Check out code
@@ -279,32 +281,32 @@ Configure your GitHub pipeline with a step which utilizes the `actions/cache@v4`
 Example `ci` yaml with `.turbo` as chosen cache folder:
 
 ```yaml title=".github/workflows/ci.yml"
-  jobs:
-    build:
-      runs-on: ubuntu-latest
-      steps:
-        - name: Check out code
-          uses: actions/checkout@v4
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
 
-        - name: Cache turbo build setup // [!code highlight]
-          uses: actions/cache@v4 // [!code highlight]
-          with: // [!code highlight]
-            path: .turbo // [!code highlight]
-            key: ${{ runner.os }}-turbo-${{ github.sha }} // [!code highlight]
-            restore-keys: | // [!code highlight]
-              ${{ runner.os }}-turbo- // [!code highlight]
+      - name: Cache turbo build setup # [!code highlight]
+        uses: actions/cache@v4 # [!code highlight]
+        with: # [!code highlight]
+          path: .turbo # [!code highlight]
+          key: ${{ runner.os }}-turbo-${{ github.sha }} # [!code highlight]
+          restore-keys: | # [!code highlight]
+            ${{ runner.os }}-turbo-
 
-        - name: Setup Node.js environment
-          uses: actions/setup-node@v4
-          with:
-            node-version: 20
-            cache: 'npm'
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
 
-        - name: Install dependencies
-          run: npm install
+      - name: Install dependencies
+        run: npm install
 
-        - name: Build
-          run: npm run build
+      - name: Build
+        run: npm run build
 ```
 
 </Step>

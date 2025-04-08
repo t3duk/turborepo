@@ -42,38 +42,7 @@ And a `turbo.json`:
 Create a file called `.travis.yml` in your repository with the following contents:
 
 <PackageManagerTabs>
-<Tab>
-
-    ```yaml title=".travis.yml"
-    language: node_js
-    node_js:
-      - lts/*
-    install:
-      - npm install
-    script:
-      - npm run build
-    script:
-      - npm run test
-    ```
-
-  </Tab>
-    <Tab>
-      Travis CI detects the use of Yarn by the presence of `yarn.lock`. It will automatically ensure it is installed.
-
-      ```yaml title=".travis.yml"
-      language: node_js
-      node_js:
-        - lts/*
-      install:
-        - yarn
-      script:
-        - yarn build
-      script:
-        - yarn test
-      ```
-
-  </Tab>
-    <Tab>
+    <Tab value="pnpm">
 
       ```yaml title=".travis.yml"
       language: node_js
@@ -97,6 +66,38 @@ Create a file called `.travis.yml` in your repository with the following content
       > For more information visit the pnpm documentation section on Travis CI integration, view it [here](https://pnpm.io/continuous-integration#travis)
 
   </Tab>
+    <Tab value="yarn">
+      Travis CI detects the use of Yarn by the presence of `yarn.lock`. It will automatically ensure it is installed.
+
+      ```yaml title=".travis.yml"
+      language: node_js
+      node_js:
+        - lts/*
+      install:
+        - yarn
+      script:
+        - yarn build
+      script:
+        - yarn test
+      ```
+
+  </Tab>
+
+<Tab value="npm">
+
+    ```yaml title=".travis.yml"
+    language: node_js
+    node_js:
+      - lts/*
+    install:
+      - npm install
+    script:
+      - npm run build
+    script:
+      - npm run test
+    ```
+
+  </Tab>
 </PackageManagerTabs>
 
 ## Remote Caching
@@ -118,10 +119,6 @@ Copy the value to a safe place. You'll need it in a moment.
 
 ![Travis CI Variables](/images/docs/travis-ci-environment-variables.png)
 
-3. Make a second secret called `TURBO_TEAM` and enter the value of your team's Vercel URL _without_ the `vercel.com/`. Your Team URL can be found inside your team's general project settings from the dashboard.
-
-   If you're using a Hobby Plan, you can use your username. Your username can be found in your [Vercel Personal Account Settings](https://vercel.com/account)
-
-![Vercel Account Slug](/images/docs/vercel-slug.png)
+3. Make a second secret called `TURBO_TEAM` and enter [your Team URL](https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fsettings&title=Find+Team+URL).
 
 4. Travis CI automatically loads environment variables stored in project settings into the CI environment. No modifications are necessary for the CI file.
