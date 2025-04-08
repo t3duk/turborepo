@@ -4,7 +4,7 @@ use miette::Diagnostic;
 use serde_json::Value;
 use thiserror::Error;
 use turbopath::{AbsoluteSystemPath, AbsoluteSystemPathBuf};
-use turborepo_ui::{cprintln, BOLD, BOLD_GREEN, BOLD_RED, GREY};
+use turborepo_ui::{cprintln, BOLD, BOLD_GREEN, BOLD_RED, CYAN, GREY, YELLOW};
 
 use crate::{cli, commands::CommandBase};
 
@@ -109,24 +109,22 @@ pub async fn run(base: CommandBase) -> Result<i32, cli::Error> {
 
     if !inconsistencies.is_empty() {
         has_inconsistencies = true;
-        total_inconsistencies += inconsistencies.len();
-
-        cprintln!(color_config, BOLD, "\nInconsistent dependencies found:");
+        total_inconsistencies += inconsistencies.len() as u32;
 
         for (dep_name, versions) in inconsistencies {
             cprintln!(
                 color_config,
-                BOLD_RED,
-                "  {} has {} different versions:",
+                CYAN,
+                "  {} has {} different versions in the workspace.",
                 dep_name,
                 versions.len()
             );
 
             for (version, locations) in versions {
-                println!("    {} version '{}' in:", GREY.apply_to("→"), version);
+                println!("{} version '{}' in:", "→", BOLD_RED.apply_to(version));
 
                 for location in &locations {
-                    println!("      {}", location);
+                    cprintln!(color_config, GREY, "  {}", location);
                 }
             }
 
@@ -134,13 +132,23 @@ pub async fn run(base: CommandBase) -> Result<i32, cli::Error> {
         }
     }
 
-    if has_inconsistencies {
+    if total_inconsistencies > 1 {
         cprintln!(
             color_config,
             BOLD_RED,
-            "\nDependency check failed: {} inconsistent dependencies found.",
+            "{} unsynced dependencies found.",
             total_inconsistencies
         );
+
+        Ok(1)
+    } else if total_inconsistencies == 1 {
+        cprintln!(
+            color_config,
+            BOLD_RED,
+            "{} unsynced dependency found.",
+            total_inconsistencies
+        );
+
         Ok(1)
     } else {
         cprintln!(
