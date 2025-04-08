@@ -126,6 +126,17 @@ pub struct DependencyConfig {
     pub pin_to_version: Option<String>,
 }
 
+impl DependencyConfig {
+    /// Validates that exactly one of "ignore" or "pinToVersion" is specified
+    pub fn validate(&self) -> Result<(), &'static str> {
+        match (self.ignore, self.pin_to_version.is_some()) {
+            (true, true) => Err("Both 'ignore' and 'pinToVersion' cannot be specified together"),
+            (false, false) => Err("Either 'ignore' or 'pinToVersion' must be specified"),
+            _ => Ok(()),
+        }
+    }
+}
+
 #[derive(Serialize, Default, Debug, Clone, Iterable, Deserializable)]
 #[serde(rename_all = "camelCase")]
 // The raw deserialized turbo.json file.

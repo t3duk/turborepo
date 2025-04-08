@@ -2,7 +2,6 @@ use std::{collections::HashMap, process};
 
 use glob::Pattern;
 use miette::Diagnostic;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 use turbopath::{AbsoluteSystemPath, AbsoluteSystemPathBuf};
@@ -105,6 +104,7 @@ fn find_inconsistencies(
                     })
                 {
                     // Rule applies to at least one package
+                    // Due to validation, we know only one of ignore or pin_to_version is set
                     if dep_config.ignore {
                         // If dependency is ignored, don't include in inconsistencies
                         return false;
@@ -342,6 +342,7 @@ fn enforce_pinned_dependencies(
     color_config: turborepo_ui::ColorConfig,
 ) {
     for (dep_name, config) in dependencies {
+        // Due to validation, we know only one of ignore or pin_to_version is set
         if let Some(pinned_version) = &config.pin_to_version {
             // Skip if no packages are specified
             if config.packages.is_empty() {
