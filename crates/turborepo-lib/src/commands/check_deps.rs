@@ -47,7 +47,7 @@ pub enum Error {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DependencyVersion {
     version: String,
     locations: Vec<String>,
@@ -549,5 +549,203 @@ fn process_dependency_type(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn test_extract_base_name() {
+        // Test regular package name
+        assert_eq!(extract_base_name("react"), "react");
+
+        // Test versioned package
+        assert_eq!(extract_base_name("react@16.0.0"), "react");
+
+        // Test scoped package
+        assert_eq!(extract_base_name("@babel/core"), "@babel/core");
+
+        // Test scoped package with version
+        assert_eq!(extract_base_name("@babel/core@7.0.0"), "@babel/core");
+    }
+
+    #[test]
+    fn test_matches_any_package_pattern() {
+        // Test exact match
+        assert!(matches_any_package_pattern(
+            "package-a",
+            &vec!["package-a".to_string()]
+        ));
+
+        // Test no match
+        assert!(!matches_any_package_pattern(
+            "package-a",
+            &vec!["package-b".to_string()]
+        ));
+
+        // Test wildcard patterns
+        assert!(matches_any_package_pattern(
+            "package-a",
+            &vec!["*".to_string()]
+        ));
+        assert!(matches_any_package_pattern(
+            "package-a",
+            &vec!["**".to_string()]
+        ));
+        assert!(matches_any_package_pattern(
+            "package-a",
+            &vec!["package-*".to_string()]
+        ));
+
+        // Test multiple patterns
+        assert!(matches_any_package_pattern(
+            "package-a",
+            &vec!["package-b".to_string(), "package-a".to_string()]
+        ));
+
+        // Test with location format (package name with path)
+        assert!(matches_any_package_pattern(
+            "package-a (path/to/package)",
+            &vec!["package-a".to_string()]
+        ));
+    }
+
+    #[test]
+    fn test_find_inconsistencies() {
+        // Setup test dependencies
+        let mut dep_map = HashMap::new();
+
+        // Add two versions of react
+        dep_map.insert(
+            "react".to_string(),
+            DependencyVersion {
+                version: "16.0.0".to_string(),
+                locations: vec!["package-a (path/to/a)".to_string()],
+            },
+        );
+        dep_map.insert(
+            "react@17.0.0".to_string(),
+            DependencyVersion {
+                version: "17.0.0".to_string(),
+                locations: vec!["package-b (path/to/b)".to_string()],
+            },
+        );
+
+        // Add one version of lodash
+        dep_map.insert(
+            "lodash".to_string(),
+            DependencyVersion {
+                version: "4.0.0".to_string(),
+                locations: vec![
+                    "package-a (path/to/a)".to_string(),
+                    "package-b (path/to/b)".to_string(),
+                ],
+            },
+        );
+
+        // Find inconsistencies without turbo config
+        let inconsistencies = find_inconsistencies(&dep_map, None);
+
+        // Should only include react (with two different versions)
+        assert_eq!(inconsistencies.len(), 1);
+        assert!(inconsistencies.contains_key("react"));
+        assert!(!inconsistencies.contains_key("lodash"));
+
+        // Check react inconsistencies
+        let react_versions = inconsistencies.get("react").unwrap();
+        assert_eq!(react_versions.len(), 2);
+        assert!(react_versions.contains_key("16.0.0"));
+        assert!(react_versions.contains_key("17.0.0"));
+    }
+
+    #[test]
+    fn test_matches_any_package_pattern_with_locations() {
+        // Test with raw package name
+        assert!(matches_any_package_pattern(
+            "react",
+            &vec!["react".to_string()]
+        ));
+
+        // Test with location format (package name with path)
+        assert!(matches_any_package_pattern(
+            "react (packages/app)",
+            &vec!["react".to_string()]
+        ));
+
+        // Test with glob pattern
+        assert!(matches_any_package_pattern(
+            "@babel/core (packages/app)",
+            &vec!["@babel/*".to_string()]
+        ));
+
+        // Test with ** wildcard
+        assert!(matches_any_package_pattern(
+            "some-package (packages/app)",
+            &vec!["**".to_string()]
+        ));
+
+        // Test no match
+        assert!(!matches_any_package_pattern(
+            "react (packages/app)",
+            &vec!["vue".to_string()]
+        ));
+    }
+
+    #[test]
+    fn test_process_dependency_type() {
+        // Create a sample package.json
+        let package_json = json!({
+            "dependencies": {
+                "react": "^16.0.0",
+                "@babel/core": "7.0.0"
+            },
+            "devDependencies": {
+                "jest": "26.0.0"
+            }
+        });
+
+        // Test processing dependencies
+        let mut all_dependencies_map: HashMap<String, DependencyVersion> = HashMap::new();
+        let location = "test-package (path/to/package)";
+
+        // Process regular dependencies
+        process_dependency_type(
+            "dependencies",
+            &package_json,
+            location,
+            &mut all_dependencies_map,
+        );
+
+        // Process dev dependencies
+        process_dependency_type(
+            "devDependencies",
+            &package_json,
+            location,
+            &mut all_dependencies_map,
+        );
+
+        // Check results
+        assert_eq!(all_dependencies_map.len(), 3);
+
+        // Check react dependency
+        let react_dep = all_dependencies_map.get("react").unwrap();
+        assert_eq!(react_dep.version, "^16.0.0");
+        assert_eq!(react_dep.locations, vec![location]);
+
+        // Check @babel/core dependency
+        let babel_dep = all_dependencies_map.get("@babel/core").unwrap();
+        assert_eq!(babel_dep.version, "7.0.0");
+        assert_eq!(babel_dep.locations, vec![location]);
+
+        // Check jest dependency
+        let jest_dep = all_dependencies_map.get("jest").unwrap();
+        assert_eq!(jest_dep.version, "26.0.0");
+        assert_eq!(jest_dep.locations, vec![location]);
     }
 }
