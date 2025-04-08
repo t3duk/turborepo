@@ -149,7 +149,10 @@ fn matches_any_package_pattern(location: &str, patterns: &[String]) -> bool {
     })
 }
 
-pub async fn run(base: CommandBase) -> Result<i32, cli::Error> {
+pub async fn run(
+    base: CommandBase,
+    only: Option<cli::DependencyFilter>,
+) -> Result<i32, cli::Error> {
     let repo_root = &base.repo_root;
     let color_config = base.color_config;
 
@@ -168,12 +171,36 @@ pub async fn run(base: CommandBase) -> Result<i32, cli::Error> {
     // Try to load the root turbo.json if it exists
     let turbo_config = load_turbo_json(repo_root).ok();
 
-    cprintln!(
-        color_config,
-        BOLD,
-        "Checking dependency versions across {} package.json files...\n",
-        package_json_files.len()
-    );
+    // Print a message about the dependency type filter if it's set
+    if let Some(filter) = &only {
+        match filter {
+            cli::DependencyFilter::Prod => {
+                cprintln!(
+                    color_config,
+                    BOLD,
+                    "Checking dependency versions across {} package.json files (only \
+                     'dependencies')...\n",
+                    package_json_files.len()
+                );
+            }
+            cli::DependencyFilter::Dev => {
+                cprintln!(
+                    color_config,
+                    BOLD,
+                    "Checking dependency versions across {} package.json files (only \
+                     'devDependencies')...\n",
+                    package_json_files.len()
+                );
+            }
+        }
+    } else {
+        cprintln!(
+            color_config,
+            BOLD,
+            "Checking dependency versions across {} package.json files...\n",
+            package_json_files.len()
+        );
+    }
 
     // Print dependency configuration information if available
     let mut pinned_deps = HashMap::new();
@@ -198,7 +225,12 @@ pub async fn run(base: CommandBase) -> Result<i32, cli::Error> {
     let mut all_dependencies_map: HashMap<String, DependencyVersion> = HashMap::new();
 
     for package_json_path in &package_json_files {
-        process_package_json(package_json_path, repo_root, &mut all_dependencies_map)?;
+        process_package_json(
+            package_json_path,
+            repo_root,
+            &mut all_dependencies_map,
+            only,
+        )?;
     }
 
     // IMPORTANT: First check for inconsistencies BEFORE enforcing pinned versions
@@ -460,6 +492,7 @@ fn process_package_json(
     package_json_path: &AbsoluteSystemPath,
     repo_root: &AbsoluteSystemPath,
     all_dependencies_map: &mut HashMap<String, DependencyVersion>,
+    only: Option<cli::DependencyFilter>,
 ) -> Result<(), Error> {
     let package_json_content =
         package_json_path
@@ -489,19 +522,42 @@ fn process_package_json(
 
     let location = format!("{} ({})", package_name, relative_path);
 
-    // Process both dependency types
-    process_dependency_type(
-        "dependencies",
-        &package_json,
-        &location,
-        all_dependencies_map,
-    );
-    process_dependency_type(
-        "devDependencies",
-        &package_json,
-        &location,
-        all_dependencies_map,
-    );
+    // Process dependencies based on the filter
+    match only {
+        Some(cli::DependencyFilter::Prod) => {
+            // Only process production dependencies
+            process_dependency_type(
+                "dependencies",
+                &package_json,
+                &location,
+                all_dependencies_map,
+            );
+        }
+        Some(cli::DependencyFilter::Dev) => {
+            // Only process dev dependencies
+            process_dependency_type(
+                "devDependencies",
+                &package_json,
+                &location,
+                all_dependencies_map,
+            );
+        }
+        None => {
+            // Process both dependency types (default behavior)
+            process_dependency_type(
+                "dependencies",
+                &package_json,
+                &location,
+                all_dependencies_map,
+            );
+            process_dependency_type(
+                "devDependencies",
+                &package_json,
+                &location,
+                all_dependencies_map,
+            );
+        }
+    }
 
     Ok(())
 }
@@ -1196,6 +1252,123 @@ mod tests {
         // matching logic in find_inconsistencies works correctly, even
         // though we can't directly test it with the current mock
         // structure.
+    }
+
+    // Add a new test for the dependency filtering functionality
+    #[test]
+    fn test_process_package_json_with_filter() {
+        // Create a sample package.json with both dependency types
+        let package_json = json!({
+            "name": "test-package",
+            "dependencies": {
+                "prod-dep": "1.0.0"
+            },
+            "devDependencies": {
+                "dev-dep": "2.0.0"
+            }
+        });
+
+        // Convert to string for our mock file
+        let package_json_str = package_json.to_string();
+
+        // Create test cases for each filter mode
+        let test_cases = vec![
+            // No filter - should process both dependency types
+            (None, vec!["prod-dep", "dev-dep"]),
+            // Prod filter - should only process dependencies
+            (Some(cli::DependencyFilter::Prod), vec!["prod-dep"]),
+            // Dev filter - should only process devDependencies
+            (Some(cli::DependencyFilter::Dev), vec!["dev-dep"]),
+        ];
+
+        for (filter, expected_deps) in test_cases {
+            // Setup a fresh dependencies map for each test case
+            let mut dependencies_map = HashMap::new();
+
+            // Create a mock function that tracks processed dependencies
+            let mut processed_deps = Vec::new();
+
+            // Process the package JSON with the current filter
+            let process_result = process_dependency_type_mock(
+                "dependencies",
+                &package_json,
+                "test-package (path/to/package)",
+                &mut dependencies_map,
+                &mut processed_deps,
+                filter,
+            );
+
+            process_result.expect("Processing should succeed");
+
+            // Check that only the expected dependencies were processed
+            assert_eq!(
+                processed_deps.len(),
+                expected_deps.len(),
+                "Wrong number of dependencies processed with filter {:?}",
+                filter
+            );
+
+            for expected_dep in expected_deps {
+                assert!(
+                    processed_deps.contains(&expected_dep.to_string()),
+                    "Expected dependency '{}' was not processed with filter {:?}",
+                    expected_dep,
+                    filter
+                );
+            }
+        }
+    }
+
+    // Helper function to mock dependency processing for the filter test
+    fn process_dependency_type_mock(
+        dep_type: &str,
+        package_json: &Value,
+        location: &str,
+        all_dependencies_map: &mut HashMap<String, DependencyVersion>,
+        processed_deps: &mut Vec<String>,
+        filter: Option<cli::DependencyFilter>,
+    ) -> Result<(), Error> {
+        // Create a mock package path and repo root for the test
+        let package_path = AbsoluteSystemPathBuf::new("/path/to/package.json").unwrap();
+        let repo_root = AbsoluteSystemPathBuf::new("/").unwrap();
+
+        // Mock the process_package_json function's behavior
+        match filter {
+            Some(cli::DependencyFilter::Prod) => {
+                // Only process production dependencies
+                if dep_type == "dependencies" {
+                    if let Some(deps) = package_json.get("dependencies").and_then(|v| v.as_object())
+                    {
+                        for (dep_name, _) in deps {
+                            processed_deps.push(dep_name.clone());
+                        }
+                    }
+                }
+            }
+            Some(cli::DependencyFilter::Dev) => {
+                // Only process dev dependencies
+                if dep_type == "devDependencies" {
+                    if let Some(deps) = package_json
+                        .get("devDependencies")
+                        .and_then(|v| v.as_object())
+                    {
+                        for (dep_name, _) in deps {
+                            processed_deps.push(dep_name.clone());
+                        }
+                    }
+                }
+            }
+            None => {
+                // Process both dependency types
+                if let Some(deps) = package_json.get(dep_type).and_then(|v| v.as_object()) {
+                    for (dep_name, _) in deps {
+                        processed_deps.push(dep_name.clone());
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

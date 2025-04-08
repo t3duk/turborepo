@@ -593,7 +593,12 @@ pub enum Command {
         reason: Option<String>,
     },
     /// Check for inconsistent dependency versions across your monorepo
-    CheckDeps,
+    CheckDeps {
+        /// Only check specific dependency type, either "dev" for
+        /// devDependencies or "prod" for dependencies
+        #[clap(long, value_enum)]
+        only: Option<DependencyFilter>,
+    },
     #[clap(hide = true)]
     Clone {
         url: String,
@@ -774,6 +779,16 @@ pub enum BoundariesIgnore {
     /// Prompts user if they want to add `@boundaries-ignore` comment
     #[default]
     Prompt,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum, Serialize, Eq, PartialEq)]
+pub enum DependencyFilter {
+    /// Only check dependencies in the "dependencies" field
+    #[serde(rename = "prod")]
+    Prod,
+    /// Only check dependencies in the "devDependencies" field
+    #[serde(rename = "dev")]
+    Dev,
 }
 
 #[derive(Parser, Clone, Debug, Default, Serialize, PartialEq)]
@@ -1416,13 +1431,13 @@ pub async fn run(
 
             Ok(boundaries::run(base, event, ignore, reason).await?)
         }
-        Command::CheckDeps => {
+        Command::CheckDeps { only } => {
             let event = CommandEventBuilder::new("check-deps").with_parent(&root_telemetry);
             event.track_call();
             let base = CommandBase::new(cli_args.clone(), repo_root, version, color_config)?;
             event.track_ui_mode(base.opts.run_opts.ui_mode);
 
-            Ok(check_deps::run(base).await?)
+            Ok(check_deps::run(base, only).await?)
         }
         Command::Clone {
             url,
