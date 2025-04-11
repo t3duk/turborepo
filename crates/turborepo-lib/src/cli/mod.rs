@@ -1437,7 +1437,7 @@ pub async fn run(
             let base = CommandBase::new(cli_args.clone(), repo_root, version, color_config)?;
             event.track_ui_mode(base.opts.run_opts.ui_mode);
 
-            Ok(check_deps::run(base, only).await?)
+            Ok(check_deps::run(base, only.clone()).await?)
         }
         Command::Clone {
             url,
