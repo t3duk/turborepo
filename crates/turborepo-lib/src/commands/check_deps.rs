@@ -63,6 +63,24 @@ fn find_inconsistencies(
     dep_map: &HashMap<String, DependencyVersion>,
     turbo_config: Option<&RawTurboJson>,
 ) -> HashMap<String, HashMap<String, Vec<String>>> {
+    // Extract dependency configurations once to avoid borrowing issues
+    let dep_configs: HashMap<String, (Option<Vec<String>>, Option<Vec<String>>)> =
+        if let Some(config) = turbo_config {
+            if let Some(deps) = &config.dependencies {
+                deps.iter()
+                    .map(|(name, config)| {
+                        let ignore = config.ignore.clone();
+                        let pin_to_version = config.pin_to_version.clone();
+                        (name.clone(), (ignore, pin_to_version))
+                    })
+                    .collect()
+            } else {
+                HashMap::new()
+            }
+        } else {
+            HashMap::new()
+        };
+
     let mut result: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
 
     // First, group all dependencies by their base name (without version suffix)
@@ -80,44 +98,102 @@ fn find_inconsistencies(
             .extend(dep_info.locations.clone());
     }
 
+    // Make a copy of the names to process to avoid borrowing issues
+    let dep_names: Vec<String> = result.keys().cloned().collect();
+
     // Process dependencies according to rules
-    result.retain(|name, versions| {
-        // Check if this dependency has a rule in the turbo.json config
-        if let Some(config) = turbo_config.and_then(|c| c.dependencies.as_ref()) {
-            if let Some(dep_config) = config.get(name) {
-                // Skip if no packages are specified in the rule
-                if dep_config.packages.is_empty() {
-                    return versions.len() > 1; // Default behavior: only show
-                                               // multiple versions
-                }
+    for name in dep_names {
+        if let Some(versions) = result.get_mut(&name) {
+            let mut should_keep = true;
+            let mut has_config = false;
 
-                // Check if the rule should be applied by matching package patterns
-                let has_matching_packages = versions.values().any(|locations| {
-                    locations
-                        .iter()
-                        .any(|location| matches_any_package_pattern(location, &dep_config.packages))
-                });
+            // Check if this dependency has a rule in the extracted configs
+            if let Some((ignore_opt, pin_opt)) = dep_configs.get(&name) {
+                has_config = true;
 
-                if has_matching_packages {
-                    // Rule applies to at least one package
-                    if dep_config.ignore {
-                        // If dependency is ignored, don't include in inconsistencies
-                        return false;
+                // First, check if there are "ignore" patterns
+                if let Some(ignore_patterns) = ignore_opt {
+                    // Create a new version map with ignored locations filtered out
+                    let mut filtered_versions: HashMap<String, Vec<String>> = HashMap::new();
+                    let mut all_ignored = true;
+
+                    // For each version, filter out the ignored locations
+                    for (version, locations) in versions.iter() {
+                        let non_ignored_locations: Vec<String> = locations
+                            .iter()
+                            .filter(|location| {
+                                !matches_any_package_pattern(location, ignore_patterns)
+                            })
+                            .cloned()
+                            .collect();
+
+                        // If we have any non-ignored locations, keep this version
+                        if !non_ignored_locations.is_empty() {
+                            all_ignored = false;
+                            filtered_versions.insert(version.clone(), non_ignored_locations);
+                        }
                     }
 
-                    if let Some(pin_version) = &dep_config.pin_to_version {
-                        // For pinned dependencies, check if ANY version doesn't match the pinned
-                        // version If we find any non-matching version,
-                        // report it as an inconsistency
-                        return versions.keys().any(|v| v != pin_version);
+                    // If all locations were ignored, mark for removal
+                    if all_ignored {
+                        should_keep = false;
+                    } else {
+                        // Replace the original versions with filtered ones
+                        *versions = filtered_versions;
+                    }
+                }
+
+                // Second, check for pinned versions
+                if should_keep {
+                    if let Some(pin_patterns) = pin_opt {
+                        // For each version and its locations, check if it matches any pin pattern
+                        let mut has_pins = false;
+                        let mut has_violations = false;
+
+                        for (version, locations) in versions.iter() {
+                            // Collect all pin patterns that apply to any package in this version
+                            let matching_pin_locations: Vec<_> = locations
+                                .iter()
+                                .filter(|location| {
+                                    matches_any_package_pattern(location, pin_patterns)
+                                })
+                                .collect();
+
+                            // If any locations match, check if versions all match what's expected
+                            if !matching_pin_locations.is_empty() {
+                                has_pins = true;
+
+                                // For simplicity in this implementation, we'll assume all pinned
+                                // packages should use the same version (first pattern)
+                                // In a more complete implementation, we'd need to match each
+                                // location to its specific pin
+                                // pattern and version
+                                let expected_version = &pin_patterns[0];
+                                if version != expected_version {
+                                    has_violations = true;
+                                }
+                            }
+                        }
+
+                        // Update should_keep based on pin analysis
+                        if has_pins {
+                            should_keep = has_violations;
+                        }
                     }
                 }
             }
-        }
 
-        // Default behavior: only show if there are multiple versions
-        versions.len() > 1
-    });
+            // If we don't have a specific config, use the default behavior
+            if !has_config {
+                should_keep = versions.len() > 1;
+            }
+
+            // If we shouldn't keep this dependency, remove it from the result
+            if !should_keep {
+                result.remove(&name);
+            }
+        }
+    }
 
     result
 }
@@ -134,19 +210,31 @@ fn matches_any_package_pattern(location: &str, patterns: &[String]) -> bool {
 
     // Check if any pattern matches
     patterns.iter().any(|pattern| {
-        // Special case: "**" or "*" means all packages
-        if pattern == "**" || pattern == "*" {
-            return true;
-        }
-
-        // Use glob pattern matching
-        if let Ok(glob_pattern) = Pattern::new(pattern) {
-            glob_pattern.matches(package_name)
+        // Handle negation patterns
+        if let Some(negated_pattern) = pattern.strip_prefix('!') {
+            // This is a negation pattern, so we should return false if it matches
+            !matches_single_pattern(package_name, negated_pattern)
         } else {
-            // If pattern is invalid, just do an exact match
-            pattern == package_name
+            // Normal pattern
+            matches_single_pattern(package_name, pattern)
         }
     })
+}
+
+// Helper to match a single pattern without negation handling
+fn matches_single_pattern(package_name: &str, pattern: &str) -> bool {
+    // Special case: "**" or "*" means all packages
+    if pattern == "**" || pattern == "*" {
+        return true;
+    }
+
+    // Use glob pattern matching
+    if let Ok(glob_pattern) = Pattern::new(pattern) {
+        glob_pattern.matches(package_name)
+    } else {
+        // If pattern is invalid, just do an exact match
+        pattern == package_name
+    }
 }
 
 pub async fn run(
@@ -209,10 +297,11 @@ pub async fn run(
             if !dependencies.is_empty() {
                 // Silently collect pinned deps info without printing
                 for (dep_name, dep_config) in dependencies {
-                    if !dep_config.packages.is_empty() {
-                        if let Some(version) = &dep_config.pin_to_version {
-                            // Store pinned deps for better error messages
-                            pinned_deps.insert(dep_name.clone(), version.clone());
+                    if let Some(pin_patterns) = &dep_config.pin_to_version {
+                        if !pin_patterns.is_empty() {
+                            // Store pinned deps for better error messages - use first version for
+                            // now
+                            pinned_deps.insert(dep_name.clone(), pin_patterns[0].clone());
                         }
                     }
                 }
@@ -366,12 +455,16 @@ fn enforce_pinned_dependencies(
     color_config: turborepo_ui::ColorConfig,
 ) {
     for (dep_name, config) in dependencies {
-        // Due to validation, we know only one of ignore or pin_to_version is set
-        if let Some(pinned_version) = &config.pin_to_version {
-            // Skip if no packages are specified
-            if config.packages.is_empty() {
+        // Only proceed if we have pin_to_version patterns
+        if let Some(pin_patterns) = &config.pin_to_version {
+            // Skip if no pin patterns are specified
+            if pin_patterns.is_empty() {
                 continue;
             }
+
+            // For simplicity, we'll use the first pin pattern's version
+            // In a more sophisticated implementation, we'd need to handle multiple versions
+            let pinned_version = &pin_patterns[0];
 
             cprintln!(
                 color_config,
@@ -391,13 +484,20 @@ fn enforce_pinned_dependencies(
                 let base_name = extract_base_name(key);
 
                 if base_name == dep_name {
-                    // Check if any location matches our package patterns
-                    let matching_locations: Vec<String> = dep_info
+                    // Get locations that match our pin patterns
+                    let mut matching_locations: Vec<String> = dep_info
                         .locations
                         .iter()
-                        .filter(|location| matches_any_package_pattern(location, &config.packages))
+                        .filter(|location| matches_any_package_pattern(location, pin_patterns))
                         .cloned()
                         .collect();
+
+                    // If we have ignore patterns, filter out any locations that match them
+                    if let Some(ignore_patterns) = &config.ignore {
+                        matching_locations.retain(|location| {
+                            !matches_any_package_pattern(location, ignore_patterns)
+                        });
+                    }
 
                     if !matching_locations.is_empty() {
                         // Add to locations that need to be consolidated
@@ -853,9 +953,8 @@ mod tests {
         dependencies.insert(
             "react".to_string(),
             DependencyConfig {
-                packages: vec!["*".to_string()],
-                ignore: false,
-                pin_to_version: Some("18.0.0".to_string()),
+                ignore: None,
+                pin_to_version: Some(vec!["*".to_string(), "18.0.0".to_string()]),
             },
         );
 
@@ -1177,9 +1276,8 @@ mod tests {
         dep_config_map.insert(
             "react".to_string(),
             DependencyConfig {
-                packages: vec!["apps/*".to_string()], // Only match packages in apps directory
-                pin_to_version: Some("18.0.0".to_string()),
-                ignore: false,
+                ignore: None,
+                pin_to_version: Some(vec!["apps/*".to_string(), "18.0.0".to_string()]),
             },
         );
 

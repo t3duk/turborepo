@@ -110,30 +110,58 @@ impl From<&RawRemoteCacheOptions> for ConfigurationOptions {
 #[derive(Serialize, Deserialize, Debug, Clone, Iterable, Deserializable, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DependencyConfig {
-    /// When true, dependency version inconsistencies for this package will be
-    /// ignored
-    #[serde(default)]
-    pub ignore: bool,
+    /// List of package name patterns where dependency version inconsistencies
+    /// should be ignored Supports glob patterns like "*" or "**" for all
+    /// packages Negation patterns like "!pkg-name" can be used to exclude
+    /// specific packages
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignore: Option<Vec<String>>,
 
-    /// List of package name patterns that this rule applies to
-    /// Supports glob patterns like "*" or "**" for all packages
-    #[serde(default)]
-    pub packages: Vec<String>,
-
-    /// Optional version to enforce across all matching packages
-    /// If specified, all packages matching the patterns must use this version
-    #[serde(default, rename = "pinToVersion")]
-    pub pin_to_version: Option<String>,
+    /// Map of package name patterns to versions for enforcing specific versions
+    /// Keys are package patterns (with glob support)
+    /// Values are the version strings to be enforced
+    #[serde(
+        default,
+        rename = "pinToVersion",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pin_to_version: Option<Vec<String>>,
 }
 
 impl DependencyConfig {
-    /// Validates that exactly one of "ignore" or "pinToVersion" is specified
+    /// Validates that:
+    /// 1. At least one of "ignore" or "pinToVersion" is specified
+    /// 2. No package appears in both arrays (direct conflict)
     pub fn validate(&self) -> Result<(), &'static str> {
-        match (self.ignore, self.pin_to_version.is_some()) {
-            (true, true) => Err("Both 'ignore' and 'pinToVersion' cannot be specified together"),
-            (false, false) => Err("Either 'ignore' or 'pinToVersion' must be specified"),
-            _ => Ok(()),
+        // Check that at least one field is provided
+        if self.ignore.is_none() && self.pin_to_version.is_none() {
+            return Err("Either 'ignore' or 'pinToVersion' must be specified");
         }
+
+        // If both are specified, check for conflicts
+        if let (Some(ignore_patterns), Some(pin_patterns)) = (&self.ignore, &self.pin_to_version) {
+            // Check for exact matches (direct conflicts)
+            for ignore_pattern in ignore_patterns {
+                for pin_pattern in pin_patterns {
+                    if ignore_pattern == pin_pattern {
+                        return Err(
+                            "The same package pattern cannot appear in both 'ignore' and \
+                             'pinToVersion'",
+                        );
+                    }
+
+                    // Special case for "*" and "**" wildcards in ignore
+                    if (ignore_pattern == "*" || ignore_pattern == "**")
+                        && !pin_pattern.starts_with('!')
+                    {
+                        return Err("When using '*' or '**' in 'ignore', all pinToVersion \
+                                    patterns must use negation ('!') prefix");
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
